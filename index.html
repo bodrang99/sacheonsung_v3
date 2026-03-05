@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>12간지 사천성 - 모바일 대모험</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Gaegu:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --tile-size: 40px;
+            --bg-color: #fffdfa;
+        }
+        body {
+            font-family: 'Gaegu', cursive;
+            background-color: var(--bg-color);
+            overflow-x: hidden;
+            touch-action: manipulation;
+            margin: 0;
+            padding: 0;
+        }
+        .game-board {
+            display: grid;
+            gap: 2px;
+            background-color: #fef3c7;
+            padding: 8px;
+            border-radius: 20px;
+            box-shadow: 0 8px 0px #f59e0b;
+            margin: 0 auto;
+            position: relative;
+            max-width: 95vw;
+            box-sizing: border-box;
+        }
+        .tile {
+            width: var(--tile-size);
+            height: calc(var(--tile-size) * 1.25);
+            background: white;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: calc(var(--tile-size) * 0.7);
+            cursor: pointer;
+            transition: all 0.1s ease;
+            user-select: none;
+            border-bottom: 3px solid #e2e8f0;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .tile:active { transform: scale(0.9); }
+        .tile.selected {
+            background-color: #fde68a;
+            border-color: #f59e0b;
+            transform: translateY(-2px);
+            z-index: 10;
+        }
+        .tile.hint-highlight {
+            animation: hintPulse 0.6s infinite alternate;
+            background-color: #bef264;
+            border-color: #65a30d;
+        }
+        @keyframes hintPulse {
+            from { transform: scale(1); }
+            to { transform: scale(1.1); }
+        }
+        .tile.empty { visibility: hidden; pointer-events: none; }
+        #path-canvas { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 20; }
+        .game-container { position: relative; display: flex; justify-content: center; width: 100%; }
+        .btn-fancy {
+            background: white;
+            border-bottom: 4px solid #f59e0b;
+            color: #d97706;
+            transition: all 0.1s;
+        }
+        .btn-fancy:active { border-bottom-width: 0; transform: translateY(4px); }
+        .modal { background: rgba(0,0,0,0.75); backdrop-filter: blur(5px); }
+    </style>
+</head>
+<body class="text-gray-800 min-h-screen flex flex-col items-center py-4 px-2">
+
+    <div class="text-center mb-2">
+        <h1 class="text-3xl font-bold text-amber-600">🐰 12간지 대모험 🐰</h1>
+        <div id="level-display" class="text-xl font-bold text-amber-500">LEVEL 1 / 5</div>
+    </div>
+
+    <div class="flex gap-2 mb-3">
+        <div class="bg-white p-1 px-3 rounded-xl text-center shadow-sm border-2 border-amber-200">
+            <div class="text-[10px] text-amber-400 font-bold">남은 짝</div>
+            <div id="remaining-count" class="text-lg font-bold text-amber-600">0</div>
+        </div>
+        <div class="bg-white p-1 px-3 rounded-xl text-center shadow-sm border-2 border-amber-200">
+            <div class="text-[10px] text-amber-400 font-bold">진행 시간</div>
+            <div id="timer" class="text-lg font-bold text-amber-600">00:00</div>
+        </div>
+        <div id="hint-indicator" class="bg-white p-1 px-3 rounded-xl text-center shadow-sm border-2 border-amber-200">
+            <div class="text-[10px] text-amber-400 font-bold">남은 힌트</div>
+            <div id="hint-count" class="text-lg font-bold text-green-600">3</div>
+        </div>
+    </div>
+
+    <div class="game-container" id="container">
+        <canvas id="path-canvas"></canvas>
+        <div id="board" class="game-board"></div>
+    </div>
+
+    <div class="mt-4 flex gap-3">
+        <button onclick="resetWholeGame()" class="btn-fancy px-5 py-2 rounded-xl font-bold">처음부터</button>
+        <button id="hint-btn" onclick="useHint()" class="btn-fancy px-5 py-2 rounded-xl font-bold text-green-700 border-green-500">힌트</button>
+    </div>
+
+    <div id="message-box" class="fixed bottom-20 left-1/2 transform -translate-x-1/2 bg-white/95 text-amber-600 border-2 border-amber-300 font-bold text-lg px-6 py-2 rounded-2xl shadow-2xl opacity-0 transition-opacity duration-300 pointer-events-none z-50 text-center min-w-[200px]">
+    </div>
+
+    <div id="modal" class="fixed inset-0 modal flex items-center justify-center hidden z-[100] p-6">
+        <div class="bg-white rounded-3xl p-8 max-w-sm w-full shadow-2xl text-center border-4 border-amber-300">
+            <h2 id="modal-title" class="text-3xl font-bold text-amber-600 mb-4">참 잘했어요!</h2>
+            <div id="modal-content" class="text-xl mb-6 leading-relaxed"></div>
+            <button id="modal-close-btn" onclick="closeModal()" class="btn-fancy w-full py-3 rounded-2xl font-bold text-2xl">다음으로</button>
+        </div>
+    </div>
+
+    <script>
+        const MAX_LEVEL = 5;
+        const ROWS = 9;
+        const COLS = 11;
+        const SYMBOLS = ['🐭', '🐮', '🐯', '🐰', '🐲', '🐍', '🐴', '🐑', '🐵', '🐔', '🐶', '🐷'];
+        
+        let currentLevel = 1;
+        let board = [];
+        let selectedTile = null;
+        let startTime = null;
+        let timerInterval = null;
+        let totalGameStartTime = null;
+        let hintsLeft = 3;
+        let finalScoreSec = 0;
+
+        const SHAPES = {
+            1: (r, c) => (r >= 4 && r <= 5 && c >= 5 && c <= 7), 
+            2: (r, c) => (r >= 3 && r <= 6 && c >= 4 && c <= 8), 
+            3: (r, c) => {
+                const isCenterH = (r === 5 && c >= 3 && c <= 9);
+                const isCenterV = (c === 6 && r >= 2 && r <= 8);
+                return isCenterH || isCenterV;
+            },
+            4: (r, c) => {
+                const isEdge = (r === 2 || r === 8 || c === 2 || c === 10);
+                return isEdge && r >= 2 && r <= 8 && c >= 2 && c <= 10;
+            },
+            5: (r, c) => (r >= 2 && r <= 8 && c >= 2 && c <= 10) 
+        };
+
+        function calculateTileSize() {
+            const screenW = window.innerWidth;
+            const screenH = window.innerHeight;
+            const availableW = screenW * 0.9;
+            const availableH = screenH - 280;
+            const sizeW = Math.floor(availableW / COLS);
+            const sizeH = Math.floor(availableH / (ROWS * 1.25));
+            let size = Math.min(sizeW, sizeH, 50);
+            if (size < 25) size = 25;
+            document.documentElement.style.setProperty('--tile-size', `${size}px`);
+        }
+
+        function initGame(level = 1) {
+            calculateTileSize();
+            currentLevel = level;
+            if (level === 1) {
+                totalGameStartTime = Date.now();
+                hintsLeft = 3;
+            }
+            clearInterval(timerInterval);
+            startTime = Date.now();
+            timerInterval = setInterval(updateTimer, 1000);
+            
+            updateHintUI();
+            document.getElementById('level-display').textContent = `LEVEL ${currentLevel} / ${MAX_LEVEL}`;
+            
+            let positions = [];
+            for(let r = 1; r <= ROWS; r++) { 
+                for(let c = 1; c <= COLS; c++) { 
+                    if (SHAPES[currentLevel](r, c)) positions.push({r, c}); 
+                } 
+            }
+            
+            if (positions.length % 2 !== 0) positions.pop();
+            
+            let tiles = [];
+            const pairsNeeded = positions.length / 2;
+            for(let i = 0; i < pairsNeeded; i++) {
+                const symbol = SYMBOLS[i % SYMBOLS.length];
+                tiles.push(symbol, symbol);
+            }
+            
+            tiles.sort(() => Math.random() - 0.5);
+            
+            board = Array.from({length: ROWS + 2}, () => Array(COLS + 2).fill(null));
+            positions.forEach(pos => { board[pos.r][pos.c] = tiles.pop(); });
+            
+            renderBoard();
+            updateStats();
+            clearCanvas();
+            setTimeout(() => { resizeCanvas(); checkDeadlock(); }, 100);
+        }
+
+        function renderBoard() {
+            const boardElement = document.getElementById('board');
+            boardElement.style.gridTemplateColumns = `repeat(${COLS}, 1fr)`;
+            boardElement.innerHTML = '';
+            for(let r = 1; r <= ROWS; r++) {
+                for(let c = 1; c <= COLS; c++) {
+                    const tileDiv = document.createElement('div');
+                    tileDiv.className = `tile ${board[r][c] ? '' : 'empty'}`;
+                    tileDiv.textContent = board[r][c] || '';
+                    tileDiv.dataset.r = r; tileDiv.dataset.c = c;
+                    tileDiv.onclick = () => handleTileClick(r, c);
+                    boardElement.appendChild(tileDiv);
+                }
+            }
+        }
+
+        function handleTileClick(r, c) {
+            if (!board[r][c]) return;
+            document.querySelectorAll('.hint-highlight').forEach(t => t.classList.remove('hint-highlight'));
+            
+            if (!selectedTile) {
+                selectedTile = { r, c, symbol: board[r][c] };
+                document.querySelector(`[data-r="${r}"][data-c="${c}"]`).classList.add('selected');
+            } else {
+                if (selectedTile.r === r && selectedTile.c === c) {
+                    selectedTile = null;
+                    document.querySelectorAll('.tile').forEach(t => t.classList.remove('selected'));
+                    return;
+                }
+                
+                if (selectedTile.symbol === board[r][c]) {
+                    const path = findPath(selectedTile, {r, c});
+                    if (path) {
+                        drawPath(path);
+                        const prevTile = selectedTile;
+                        selectedTile = null;
+                        
+                        setTimeout(() => {
+                            board[prevTile.r][prevTile.c] = null; 
+                            board[r][c] = null;
+                            clearCanvas();
+                            renderBoard(); 
+                            updateStats();
+                            if(!checkLevelClear()) checkDeadlock();
+                        }, 200);
+                        return;
+                    }
+                }
+                resetSelection(r, c);
+            }
+        }
+
+        function resetSelection(r, c) {
+            document.querySelectorAll('.tile').forEach(t => t.classList.remove('selected'));
+            selectedTile = { r, c, symbol: board[r][c] };
+            document.querySelector(`[data-r="${r}"][data-c="${c}"]`).classList.add('selected');
+        }
+
+        function findPath(start, end) {
+            const dr = [-1, 1, 0, 0]; const dc = [0, 0, -1, 1];
+            let queue = [{r: start.r, c: start.c, dir: -1, turns: 0, path: [{r: start.r, c: start.c}]}];
+            let visited = new Map();
+            while(queue.length > 0) {
+                let current = queue.shift();
+                if(current.turns > 2) continue;
+                if(current.r === end.r && current.c === end.c) return current.path;
+                for(let i = 0; i < 4; i++) {
+                    let nr = current.r + dr[i]; let nc = current.c + dc[i];
+                    if(nr < 0 || nr >= ROWS + 2 || nc < 0 || nc >= COLS + 2) continue;
+                    if(board[nr][nc] === null || (nr === end.r && nc === end.c)) {
+                        let nTurns = current.turns;
+                        if(current.dir !== -1 && current.dir !== i) nTurns++;
+                        if(nTurns <= 2) {
+                            let posKey = `${nr},${nc},${i}`;
+                            if(!visited.has(posKey) || visited.get(posKey) > nTurns) {
+                                visited.set(posKey, nTurns);
+                                queue.push({ r: nr, c: nc, dir: i, turns: nTurns, path: [...current.path, {r: nr, c: nc}] });
+                            }
+                        }
+                    }
+                }
+            }
+            return null;
+        }
+
+        function findAvailablePair() {
+            let activeTiles = [];
+            for(let r = 1; r <= ROWS; r++) { 
+                for(let c = 1; c <= COLS; c++) { 
+                    if(board[r][c]) activeTiles.push({r, c, symbol: board[r][c]}); 
+                } 
+            }
+            for(let i = 0; i < activeTiles.length; i++) {
+                for(let j = i + 1; j < activeTiles.length; j++) {
+                    if(activeTiles[i].symbol === activeTiles[j].symbol) { 
+                        if(findPath(activeTiles[i], activeTiles[j])) return [activeTiles[i], activeTiles[j]]; 
+                    }
+                }
+            }
+            return null;
+        }
+
+        function checkDeadlock() {
+            if(!board.some(row => row.some(cell => cell))) return;
+            if(!findAvailablePair()) { 
+                showMessage("더 이상 짝이 없어요!<br>지팡이를 휘둘러 섞습니다! ✨"); 
+                setTimeout(shuffleBoard, 1000); 
+            }
+        }
+
+        function shuffleBoard() {
+            let tiles = [];
+            for(let r = 1; r <= ROWS; r++) { for(let c = 1; c <= COLS; c++) { if(board[r][c]) tiles.push(board[r][c]); } }
+            if(tiles.length === 0) return;
+            tiles.sort(() => Math.random() - 0.5);
+            for(let r = 1; r <= ROWS; r++) { for(let c = 1; c <= COLS; c++) { if(board[r][c]) board[r][c] = tiles.pop(); } }
+            renderBoard();
+            setTimeout(() => { if (!findAvailablePair()) shuffleBoard(); }, 100);
+        }
+
+        function useHint() {
+            if(hintsLeft <= 0) { showMessage("힌트가 다 떨어졌어요! 😢"); return; }
+            const pair = findAvailablePair();
+            if(pair) {
+                hintsLeft--; updateHintUI();
+                pair.forEach(pos => { 
+                    const t = document.querySelector(`[data-r="${pos.r}"][data-c="${pos.c}"]`);
+                    if(t) t.classList.add('hint-highlight'); 
+                });
+            }
+        }
+
+        function updateHintUI() {
+            document.getElementById('hint-count').textContent = hintsLeft;
+            document.getElementById('hint-btn').style.opacity = hintsLeft <= 0 ? "0.5" : "1";
+        }
+
+        function drawPath(path) {
+            const canvas = document.getElementById('path-canvas');
+            const ctx = canvas.getContext('2d');
+            const boardEl = document.getElementById('board');
+            if (!boardEl) return;
+            
+            const rect = boardEl.getBoundingClientRect();
+            const cellW = rect.width / COLS;
+            const cellH = rect.height / ROWS;
+            
+            const getCoord = (r, c) => ({ 
+                x: (c - 0.5) * cellW, 
+                y: (r - 0.5) * cellH 
+            });
+            
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.beginPath(); 
+            ctx.lineWidth = 4; 
+            ctx.strokeStyle = '#f59e0b'; 
+            ctx.lineJoin = 'round'; 
+            ctx.lineCap = 'round';
+            
+            const start = getCoord(path[0].r, path[0].c); 
+            ctx.moveTo(start.x, start.y);
+            for(let i = 1; i < path.length; i++) { 
+                const p = getCoord(path[i].r, path[i].c); 
+                ctx.lineTo(p.x, p.y); 
+            }
+            ctx.stroke();
+        }
+
+        function clearCanvas() { 
+            const canvas = document.getElementById('path-canvas');
+            if(canvas) {
+                const ctx = canvas.getContext('2d');
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+        }
+
+        function resizeCanvas() {
+            const canvas = document.getElementById('path-canvas'); 
+            const boardEl = document.getElementById('board');
+            if (boardEl && canvas) { 
+                canvas.width = boardEl.offsetWidth; 
+                canvas.height = boardEl.offsetHeight; 
+            }
+        }
+        function updateStats() {
+            let count = 0; board.forEach(row => row.forEach(cell => { if(cell) count++; }));
+            document.getElementById('remaining-count').textContent = count;
+        }
+        function updateTimer() {
+            const diff = Math.floor((Date.now() - startTime) / 1000);
+            const m = String(Math.floor(diff / 60)).padStart(2, '0'); 
+            const s = String(diff % 60).padStart(2, '0');
+            document.getElementById('timer').textContent = `${m}:${s}`;
+        }
+        function showMessage(msg) {
+            const box = document.getElementById('message-box'); 
+            box.innerHTML = msg; 
+            box.style.opacity = "1";
+            setTimeout(() => { box.style.opacity = "0"; }, 2000);
+        }
+
+        function checkLevelClear() {
+            let count = 0; board.forEach(row => row.forEach(cell => { if(cell) count++; }));
+            if(count === 0) {
+                clearCanvas();
+                if(currentLevel < MAX_LEVEL) {
+                    showLevelModal();
+                } else {
+                    showFinalModal();
+                }
+                return true;
+            }
+            return false;
+        }
+
+        function showLevelModal() {
+            const modal = document.getElementById('modal');
+            document.getElementById('modal-title').textContent = `Level ${currentLevel} Clear!`;
+            document.getElementById('modal-content').textContent = "훌륭합니다! 다음 단계는 더 흥미진진할 거예요.";
+            document.getElementById('modal-close-btn').textContent = "다음 레벨로";
+            modal.classList.remove('hidden');
+        }
+
+        function showFinalModal() {
+            const modal = document.getElementById('modal');
+            clearInterval(timerInterval);
+            finalScoreSec = Math.floor((Date.now() - totalGameStartTime) / 1000);
+            const timeStr = `${Math.floor(finalScoreSec / 60)}분 ${finalScoreSec % 60}초`;
+            
+            document.getElementById('modal-title').textContent = "🎉 대모험 성공! 🎉";
+            document.getElementById('modal-content').innerHTML = `
+                <div class="mb-4">모든 단계를 클리어 하셨습니다!<br>개발자님께 자랑해 보세요^^</div>
+                <div class="bg-amber-50 p-4 rounded-2xl border-2 border-amber-200">
+                    <div class="text-sm text-amber-500 font-bold mb-1">나의 총 기록</div>
+                    <div class="text-4xl font-bold text-amber-600">${timeStr}</div>
+                </div>
+            `;
+            document.getElementById('modal-close-btn').textContent = "다시 도전하기";
+            modal.classList.remove('hidden');
+        }
+
+        function closeModal() {
+            document.getElementById('modal').classList.add('hidden');
+            if (currentLevel < MAX_LEVEL) {
+                initGame(currentLevel + 1);
+            } else {
+                resetWholeGame();
+            }
+        }
+
+        function resetWholeGame() { initGame(1); }
+        window.addEventListener('resize', () => { calculateTileSize(); resizeCanvas(); });
+        window.onload = () => initGame(1);
+    </script>
+</body>
+</html>
